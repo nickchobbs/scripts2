@@ -1,0 +1,96 @@
+
+[CmdletBinding()]
+param (
+    [Parameter(Mandatory=$false)]
+    [string]$vCenterServer = "10.0.150.205",
+
+    [Parameter(Mandatory=$false)]
+    [string]$LogPath = "C:\Logs\CDDrive_Cleanup_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv",
+
+    # Add VM names or prefixes you want to skip (e.g., templates or specific appliances)
+    [Parameter(Mandatory=$false)]
+    [string[]]$ExcludeVMs = @("VCSA*", "*Template*, "Win2022*")
+)
+
+# 1. Ensure log directory exists
+$LogDir = Split-Path -Path $LogPath -Parent
+if (!(Test-Path -Path $LogDir)) {
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+}
+
+# 2. Connect to vCenter (Assumes saved credentials or Windows Auth for automation)
+# If running interactively, remove -ErrorAction Stop or handle login prompt
+try {
+    if (-not $global:DefaultVIServers -or ($global:DefaultVIServers.Name -notcontains $vCenterServer)) {
+        Write-Verbose "Connecting to $vCenterServer..."
+        Connect-VIServer -Server $vCenterServer -ErrorAction Stop | Out-Null
+    }
+}
+catch {
+    Write-Error "Failed to connect to vCenter: $_"
+    exit 1
+}
+
+# 3. Fast query using Get-View to find only VMs that actually have an ISO mounted
+Write-Verbose "Scanning environment for VMs with mounted ISOs..."
+$VMsWithISO = Get-View -ViewType VirtualMachine -Property Name, Config.Hardware.Device | Where-Object {
+    $vmName = $_.Name
+    # Skip excluded VMs
+    $isExcluded = $false
+    foreach ($pattern in $ExcludeVMs) {
+        if ($vmName -like $pattern) { $isExcluded = $true; break }
+    }
+    
+    # Check if VM is not excluded and has a CD-ROM backed by an ISO
+    (-not $isExcluded) -and ($_.Config.Hardware.Device | Where-Object {
+        $_ -is [VMware.Vim.VirtualCdrom] -and $_.Backing -is [VMware.Vim.VirtualCdromIsoBackingInfo]
+    })
+}
+
+$Results = @()
+
+# 4. Loop through targeted VMs and disconnect media
+foreach ($vmView in $VMsWithISO) {
+    $vm = Get-VM -Id $vmView.MoRef
+    $cdDrives = $vm | Get-CDDrive | Where-Object { $_.IsoPath -ne $null -or $_.ConnectionState.Connected -eq $true }
+
+    foreach ($cd in $cdDrives) {
+        $isoName = $cd.IsoPath
+        $status = "Success"
+        $errorMessage = ""
+
+        try {
+            Write-Output "Disconnecting [$isoName] from [$($vm.Name)]..."
+            
+            # Disconnect and clear media
+            $cd | Set-CDDrive -NoMedia -Connected:$false -Confirm:$false -ErrorAction Stop | Out-Null
+        }
+        catch {
+            $status = "Failed"
+            $errorMessage = $_.Exception.Message
+            Write-Warning "Failed to disconnect ISO from $($vm.Name): $errorMessage"
+        }
+
+        # Record result for audit log
+        $Results += [PSCustomObject]@{
+            Timestamp    = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            VMName       = $vm.Name
+            CDDrive      = $cd.Name
+            PreviousISO  = $isoName
+            Status       = $status
+            ErrorMessage = $errorMessage
+        }
+    }
+}
+
+# 5. Export Audit Log
+if ($Results.Count -gt 0) {
+    $Results | Export-Csv -Path $LogPath -NoTypeInformation
+    Write-Output "Cleanup complete. Processed $($Results.Count) drive(s). Log saved to $LogPath"
+}
+else {
+    Write-Output "Scan complete. No mounted ISOs found."
+}
+
+# Optional: Disconnect from vCenter if running as a standalone scheduled task
+# Disconnect-VIServer -Server $vCenterServer -Confirm:$false

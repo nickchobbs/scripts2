@@ -1,0 +1,9 @@
+# Scan the environment to verify all ISOs have been detached
+$MountedISOs = Get-VM | Get-CDDrive | Where-Object { $_.IsoPath -ne $null }
+
+if ($MountedISOs) {
+    Write-Host "⚠️ Verification Failed: There are still $($MountedISOs.Count) VM(s) with mounted ISOs:" -ForegroundColor Yellow
+    $MountedISOs | Select-Object @{N = 'VM'; E = {$_.Parent.Name }}, IsoPath
+} else {
+    Write-Host "✅ Clean Sweep! Zero (0) mounted ISOs found across the environment." -ForegroundColor Green
+}

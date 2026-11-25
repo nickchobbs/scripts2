@@ -54,9 +54,7 @@ catch {
     Write-Error "Active Directory Error: $_"
 }
 
-# ==========================================
-# 4. DNS: DELETE A RECORD
-# ==========================================
+#Step 6: Delete DNS record
 Write-Host "`n[3/3] Removing DNS A record for '$ServerName' from zone '$DnsZone'..." -ForegroundColor Cyan
 try {
     Import-Module DnsServer -ErrorAction Stop

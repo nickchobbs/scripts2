@@ -16,7 +16,7 @@ $LocalLibrary = Get-ContentLibrary |
                 Out-GridView -Title "Select the Content Library" -PassThru
                 
 # Step 4. Feth the Template and Deploy
-$TemplateName = "DOMOTZ-TEMPLATE"
+$TemplateName = "your domotz template name"
 $TemplateItem = Get-contentLibraryItem -Name $TemplateName -ContentLibrary $LocalLibrary
 $VMHost       = Get-VMHost -Name $VMHostName
 $Datastore    = Get-Datastore -Name $DatastoreName

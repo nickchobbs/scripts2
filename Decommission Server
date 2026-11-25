@@ -1,0 +1,72 @@
+#This VM will connect to your Vcenter using Powercli and delete target VM from disk.  It will also connect to AD and DNS and remove the target server.
+#Be sure to enter in your vcenter, AD server, and domain.
+
+
+# Step 2.  Configure Variables and prompt for target server.
+$vCenterServer  = "Vcenter.yourdomain.local"
+$DnsServer      = "dc01.yourdomain.local"
+$DnsZone        = "Yourdomain.local"
+$ServerName     = Read-Host "Enter the name of the target VM"
+
+# Step 3:  Safety confirmation
+$Confirm = Read-Host "Warning!  This will permanently delete '$ServerName'."
+if ($Confirm -cne "YES") {
+    Write-Warning "Decommission aborted by user."
+    exit
+}
+
+# Step 4: Connect to Vcenter & delete VM from disk.
+Write-Host "'n[1/3] Connecting to vCenter ($vCenterServer)." -ForgroundColor Cyan
+try {
+    # Ignore self-signed certificate warnings
+    Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$false |
+    Connect-VIServer -Server $vCenterServer -ErrorAction stop | out-Null
+    $VM = Get-VM -Name $ServerName -ErrorAction STop
+
+# power off the vm if it is still running.
+if ($vm.PowerState -eq "PoweredOn") {
+    Write-Host "Powering off VM '$ServerName." -ForgroundColor Yellow
+    Stop-VM -VM $VM -confirm:$False -ErrorAction Stop |Out-Null
+}
+
+Write-Host "Deleting VM '$ServerName' from disk." -ForgroundColor Yellow
+Remove-VM -VM $VM -DeletePermanently -Confirm:$false -ErrorAction Stop
+Write-Host "Successfully deleted '$ServerName' from disk" -ForgroupndColor Green
+}
+catch {
+    Write-Error "vCenter Error: $-"
+}
+finally {
+    Disconnect-VIServer -Server $vCenterServer - Confirm:$False -ErrorAction SilentlyContinue
+}
+
+# Step 5: Delete computer Object in AD
+Write-Host "`n[2/3] Removing '$ServerName' from Active Directory..." -ForegroundColor Cyan
+try {
+    Import-Module ActiveDirectory -ErrorAction Stop
+    $ADComputer = Get-ADComputer -Identity $ServerName -ErrorAction Stop
+    
+    # Use Remove-ADObject -Recursive in case the computer object contains child objects (e.g., BitLocker keys)
+    Remove-ADObject -Identity $ADComputer.DistinguishedName -Recursive -Confirm:$false -ErrorAction Stop
+    Write-Host "Successfully removed '$ServerName' from Active Directory." -ForegroundColor Green
+}
+catch {
+    Write-Error "Active Directory Error: $_"
+}
+
+# ==========================================
+# 4. DNS: DELETE A RECORD
+# ==========================================
+Write-Host "`n[3/3] Removing DNS A record for '$ServerName' from zone '$DnsZone'..." -ForegroundColor Cyan
+try {
+    Import-Module DnsServer -ErrorAction Stop
+    $DnsRecord = Get-DnsServerResourceRecord -ComputerName $DnsServer -ZoneName $DnsZone -Name $ServerName -RRType "A" -ErrorAction Stop
+    
+    Remove-DnsServerResourceRecord -ComputerName $DnsServer -ZoneName $DnsZone -InputObject $DnsRecord -Force -ErrorAction Stop
+    Write-Host "Successfully deleted DNS A record for '$ServerName'." -ForegroundColor Green
+}
+catch {
+    Write-Error "DNS Error: $_"
+}
+
+Write-Host "`nDecommissioning process completed for '$ServerName'." -ForegroundColor Cyan

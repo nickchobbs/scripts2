@@ -25,6 +25,18 @@ New-VM -Name $VMName `
        -ContentLibraryItem $TemplateItem `
        -VMHost $VMHost `
        -Datastore $Datastore `
-       -DiskStorageFormat Thin
+       -DiskStorageFormat Thin `
+       -RunAsync
+	   
+Write-Host "Started deployment of '$VMName'! (Task ID: $($Task.Id))"
+
+# Step 6 Ask if we are creating another VM
+$CreateAnother = Read-Host "would you like to build another vm? (y/n)"
+
+} while ($CreateAnother -eq 'Y' -or $CreateAnother -eq 'y')
+
+# step 7 disconnect Vcenter
+disconnect-VIServer -Server $vCenter -Confirm:$false
+Write-Host "All tasks submitted.  Check recent tasks on vcenter to monitor.  Disconnected from VCenter."
 
 
